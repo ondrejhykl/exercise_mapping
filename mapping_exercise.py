@@ -1,3 +1,6 @@
+from Bio import SeqIO
+
+
 def brute_force(text, p):
     indexes = []
     for i in range(len(text) - len(p) + 1):
@@ -122,7 +125,93 @@ class FMIndex:
         return locations
 
 
+def reverse_complement(sequence):
+    complement = {
+        "A": "T",
+        "T": "A",
+        "C": "G",
+        "G": "C"
+    }
+
+    return "".join(complement[base] for base in sequence)[::-1]
+
+
+def hamming(a, b):
+    mismatches = 0
+    for i in range(len(a)):
+        if a[i] != b[i]:
+            mismatches += 1
+    return mismatches
+
+
+def seeds(read, n):
+    result = []
+
+    for i in range(n):
+        start = i * len(read) // n
+        end = (i + 1) * len(read) // n
+        piece = read[start:end]
+        result.append((start, piece))
+
+    return result
+
+
+def map_read(read, fm, ref, d=2, n_seeds=None):
+    if n_seeds is None:
+        n_seeds = d + 1
+
+    hits = set()
+    total_candidates = 0
+
+    for strand, sequence in [
+        ("+", read),
+        ("-", reverse_complement(read))
+    ]:
+        candidates = set()
+
+        for offset, seed in seeds(sequence, n_seeds):
+            for pos in fm.locate(seed):
+                start = pos - offset
+
+                # Read must fit completely inside the reference
+                if start >= 0 and start + len(sequence) <= len(ref):
+                    candidates.add(start)
+
+        total_candidates += len(candidates)
+
+        for start in candidates:
+            mismatches = hamming(
+                ref[start:start + len(sequence)],
+                sequence
+            )
+
+            if mismatches <= d:
+                hits.add((strand, start, mismatches))
+
+    return sorted(hits), total_candidates
+
+
+def brute_map(read, ref, d=2):
+    hits = []
+
+    for strand, sequence in [
+        ("+", read),
+        ("-", reverse_complement(read))
+    ]:
+        for start in range(len(ref) - len(sequence) + 1):
+            mismatches = hamming(
+                ref[start:start + len(sequence)],
+                sequence
+            )
+
+            if mismatches <= d:
+                hits.append((strand, start, mismatches))
+
+    return sorted(hits)
+
+
 if __name__ == "__main__":
+    """
     sequence = "AAGGCGGCTTCA$"
     pattern = "GGC"
     print(brute_force(sequence, pattern))
@@ -142,3 +231,103 @@ if __name__ == "__main__":
     print(fmi.count("AT"))
     print(fmi2.count("GGC"))
     print(fmi2.locate("GGC"))
+    """
+    ref_record = SeqIO.read("reference.fasta", "fasta")
+    ref = str(ref_record.seq)
+
+    reads = [
+        (record.id, str(record.seq))
+        for record in SeqIO.parse("reads.fasta", "fasta")
+    ]
+
+    fm = FMIndex(ref + "$", 32)
+    d = 2
+
+    results = []
+
+    for name, read in reads:
+        hits, candidates = map_read(read, fm, ref, d)
+        results.append((name, read, hits, candidates))
+
+    mapped = sum(bool(hits) for _, _, hits, _ in results)
+    unmapped = len(results) - mapped
+    multiple = sum(len(hits) > 1 for _, _, hits, _ in results)
+
+    print("Total reads:", len(reads))
+    print("Mapped:", mapped)
+    print("Unmapped:", unmapped)
+    print("More than one hit:", multiple)
+
+    # Print hits of the first five reads
+    print("\nHits of the first five reads:")
+
+    for name, read, hits, _ in results[:5]:
+        if hits:
+            for strand, position, mismatches in hits:
+                print(name, strand, position, mismatches)
+        else:
+            print(name, "unmapped")
+
+    # Self-check 1: validate every hit
+    valid_hits = True
+
+    for name, read, hits, _ in results:
+        for strand, position, mismatches in hits:
+            sequence = read if strand == "+" else reverse_complement(read)
+
+            observed = hamming(
+                sequence,
+                ref[position:position + len(read)]
+            )
+
+            if not (0 <= position <= len(ref) - len(read)):
+                valid_hits = False
+            if observed != mismatches or mismatches > d:
+                valid_hits = False
+
+    print("\nSelf-check 1 - Hit positions and mismatches:",
+              "OK" if valid_hits else "ERROR")
+
+    # Self-check 2: compare 30 random reads with brute force
+    import random
+
+    random.seed(42)
+    sample = random.sample(results, min(30, len(results)))
+    matching_reads = 0
+
+    for name, read, hits, _ in sample:
+        expected = brute_map(read, ref, d)
+        if hits == expected:
+            matching_reads += 1
+
+    print("Self-check 2 - FM-index vs brute force:",
+          f"{matching_reads}/{len(sample)} reads match")
+
+    # Self-check 3: check all unmapped reads
+    unmapped_reads = [
+        (name, read)
+        for name, read, hits, _ in results
+        if not hits
+    ]
+
+    false_unmapped = 0
+
+    for name, read in unmapped_reads:
+        if brute_map(read, ref, d):
+            false_unmapped += 1
+
+    print("Self-check 3 - Unmapped reads with brute-force hits:",
+          false_unmapped)
+
+    # Self-check 4: reference ends
+    first_hits, _ = map_read(ref[:100], fm, ref, d=0)
+    first_ok = ("+", 0, 0) in first_hits
+
+    last_read = reverse_complement(ref[-100:])
+    last_hits, _ = map_read(last_read, fm, ref, d=0)
+    last_ok = ("-", len(ref) - 100, 0) in last_hits
+
+    print("Self-check 4 - Reference ends:")
+    print("  First 100 bp:", "OK" if first_ok else "ERROR")
+    print("  Reverse complement of last 100 bp:",
+          "OK" if last_ok else "ERROR")
