@@ -106,6 +106,21 @@ class FMIndex:
 
         return top, bottom
 
+    def locate(self, p):
+        locations = []
+        top, bottom = self.count(p)
+        for start_row in range(top, bottom):
+            row = start_row
+            step = 0
+            while row not in self.sampled:
+                row = self.lf(row)
+                step += 1
+
+            position = self.sampled[row] + step
+            locations.append(position)
+
+        return locations
+
 
 if __name__ == "__main__":
     sequence = "AAGGCGGCTTCA$"
@@ -126,3 +141,4 @@ if __name__ == "__main__":
     print(fmi.lf(1))
     print(fmi.count("AT"))
     print(fmi2.count("GGC"))
+    print(fmi2.locate("GGC"))
