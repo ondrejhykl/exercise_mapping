@@ -74,6 +74,39 @@ def inverse_bwt(bwt):
     return text[::-1] + "$"
 
 
+class FMIndex:
+    def __init__(self, text, s):
+        self.bwt = bwt(text, suffix_array(text))
+        self.first_occurrence = first_occurrence(self.bwt)
+        self.counts = {}
+        for X in self.bwt:
+            if X not in self.counts:
+                self.counts[X] = []
+        for i in range(len(text)+1):
+            for X in self.counts.keys():
+                self.counts[X].append(self.bwt[:i].count(X))
+        self.sampled = {}
+        for row, pos in enumerate(suffix_array(text)):
+            if pos % s == 0:
+                self.sampled[row] = pos
+        self.s = s
+
+    def lf(self, row):
+        X = self.bwt[row]
+        return self.first_occurrence[X] + self.counts[X][row]
+
+    def count(self, p):
+        top = 0
+        bottom = len(self.bwt)
+        for letter in p[::-1]:
+            ct = self.counts[letter][top]
+            cb = self.counts[letter][bottom]
+            top = self.first_occurrence[letter] + ct
+            bottom = self.first_occurrence[letter] + cb
+
+        return top, bottom
+
+
 if __name__ == "__main__":
     sequence = "AAGGCGGCTTCA$"
     pattern = "GGC"
@@ -81,11 +114,15 @@ if __name__ == "__main__":
     sa = suffix_array(sequence)
     print(sa)
     print(find_block(sequence, sa, pattern))
-    bwt = bwt(sequence, sa)
-    print(bwt)
-    fo = first_occurrence(bwt)
+    transform = bwt(sequence, sa)
+    print(transform)
+    fo = first_occurrence(transform)
     print(fo)
-    inv_bwt = inverse_bwt(bwt)
+    inv_bwt = inverse_bwt(transform)
     print(inv_bwt)
-
-
+    fmi = FMIndex("CAT$", 2)
+    fmi2 = FMIndex(sequence, 2)
+    print(fmi.sampled, fmi.bwt, fmi.counts["T"])
+    print(fmi.lf(1))
+    print(fmi.count("AT"))
+    print(fmi2.count("GGC"))
